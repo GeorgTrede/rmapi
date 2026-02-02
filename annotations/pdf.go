@@ -221,21 +221,31 @@ func (p *PdfGenerator) Generate() error {
 					}
 					page.AddAnnotation(ann)
 				} else {
+					// Draw stroke using path
+					if len(line.Points) < 2 {
+						continue
+					}
+
 					path := draw.NewPath()
 					for i := 0; i < len(line.Points); i++ {
 						x1, y1 := normalized(line.Points[i], scale, xMin, yMin)
 						path = path.AppendPoint(draw.NewPoint(x1, c.Height()-y1))
 					}
 
-					contentCreator.Add_w(float64(line.BrushSize*6.0 - 10.8))
+					// Set line width - scale to match coordinate scaling
+					strokeWidth := float64(line.BrushSize) * scale
+					if strokeWidth < 0.3 {
+						strokeWidth = 0.3
+					}
+					contentCreator.Add_w(strokeWidth)
 
 					// Use actual color for strokes
 					r, g, b := brushColorToRGB(line.BrushColor)
 					contentCreator.Add_RG(r, g, b) // Add_RG sets stroke color
 
-					//TODO: use bezier
 					draw.DrawPathWithCreator(path, contentCreator)
 
+					// Stroke the path (don't close or fill)
 					contentCreator.Add_S()
 				}
 			}
