@@ -42,17 +42,20 @@ func CreatePdfGenerator(zipName, outputFilePath string, options PdfGeneratorOpti
 	return &PdfGenerator{zipName: zipName, outputFilePath: outputFilePath, options: options}
 }
 
-// getBoundingBox calculates the bounding box of all points in the rm data
+// getBoundingBox calculates the bounding box of all points in the rm data.
+// Returns the actual content bounds for proper coordinate transformation.
 func getBoundingBox(rmData *rm.Rm) (xMin, xMax, yMin, yMax float64) {
-	// Default bounding box matching Python rmscene
-	xMin = float64(-DeviceWidth) / 2
-	xMax = float64(DeviceWidth) / 2
-	yMin = 0
-	yMax = float64(DeviceHeight)
+	// Initialize with extreme values
+	xMin = float64(9999)
+	xMax = float64(-9999)
+	yMin = float64(9999)
+	yMax = float64(-9999)
 
+	hasPoints := false
 	for _, layer := range rmData.Layers {
 		for _, line := range layer.Lines {
 			for _, point := range line.Points {
+				hasPoints = true
 				if float64(point.X) < xMin {
 					xMin = float64(point.X)
 				}
@@ -68,6 +71,15 @@ func getBoundingBox(rmData *rm.Rm) (xMin, xMax, yMin, yMax float64) {
 			}
 		}
 	}
+
+	// If no points, use default canvas
+	if !hasPoints {
+		xMin = float64(-DeviceWidth) / 2
+		xMax = float64(DeviceWidth) / 2
+		yMin = 0
+		yMax = float64(DeviceHeight)
+	}
+
 	return
 }
 
@@ -184,8 +196,28 @@ func (p *PdfGenerator) Generate() error {
 			continue
 		}
 
-		// Calculate bounding box for V6 format coordinate translation
+		// Calculate bounding box from actual content for proper positioning
 		xMin, _, yMin, _ := getBoundingBox(pageAnnotations.Data)
+
+		// Create ExtGState for highlighter transparency (CA = stroke alpha)
+		// Matches Python rmc library's Highlighter.base_opacity = 0.3
+		highlightGsDict := core.MakeDict()
+		highlightGsDict.Set("Type", core.MakeName("ExtGState"))
+		highlightGsDict.Set("CA", core.MakeFloat(0.3)) // stroke opacity
+		highlightGsDict.Set("ca", core.MakeFloat(0.3)) // fill opacity (for completeness)
+
+		// Opaque state for normal strokes
+		opaqueGsDict := core.MakeDict()
+		opaqueGsDict.Set("Type", core.MakeName("ExtGState"))
+		opaqueGsDict.Set("CA", core.MakeFloat(1.0))
+		opaqueGsDict.Set("ca", core.MakeFloat(1.0))
+
+		// Add the graphics states to page resources
+		if page.Resources == nil {
+			page.Resources = pdf.NewPdfPageResources()
+		}
+		page.Resources.AddExtGState("GS_Highlight", highlightGsDict)
+		page.Resources.AddExtGState("GS_Opaque", opaqueGsDict)
 
 		contentCreator := contentstream.NewContentCreator()
 		contentCreator.Add_q()
@@ -205,6 +237,9 @@ func (p *PdfGenerator) Generate() error {
 						continue
 					}
 
+					// Switch to transparent graphics state
+					contentCreator.Add_gs(core.PdfObjectName("GS_Highlight"))
+
 					path := draw.NewPath()
 					for i := 0; i < len(line.Points); i++ {
 						x1, y1 := normalized(line.Points[i], scale, xMin, yMin)
@@ -218,12 +253,15 @@ func (p *PdfGenerator) Generate() error {
 					}
 					contentCreator.Add_w(strokeWidth)
 
-					// Use actual color with transparency (using graphics state)
+					// Use actual color
 					r, g, b := brushColorToRGB(line.BrushColor)
 					contentCreator.Add_RG(r, g, b)
 
 					draw.DrawPathWithCreator(path, contentCreator)
 					contentCreator.Add_S()
+
+					// Restore to opaque for non-highlighter strokes
+					contentCreator.Add_gs(core.PdfObjectName("GS_Opaque"))
 				} else {
 					// Draw stroke using path
 					if len(line.Points) < 2 {
