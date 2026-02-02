@@ -6,7 +6,7 @@ import (
 
 func TestV6HeaderDetection(t *testing.T) {
 	// Create a minimal V6 "file" with just a header
-	v6Header := []byte("reMarkable .lines file, version=6          ")
+	v6Header := []byte(HeaderV6)
 	
 	// Add minimal data to avoid EOF errors
 	v6Data := append(v6Header, []byte{0, 0, 0, 0, 0}...)
@@ -34,7 +34,7 @@ func TestV6HeaderDetection(t *testing.T) {
 func TestV3StillWorks(t *testing.T) {
 	// Ensure V3 files still work
 	rm := &Rm{}
-	v3Header := []byte("reMarkable .lines file, version=3          ")
+	v3Header := []byte(HeaderV3)
 	v3Data := append(v3Header, []byte{1, 0, 0, 0}...) // 1 layer
 	v3Data = append(v3Data, []byte{0, 0, 0, 0}...)    // 0 lines
 	
@@ -51,7 +51,7 @@ func TestV3StillWorks(t *testing.T) {
 func TestV5StillWorks(t *testing.T) {
 	// Ensure V5 files still work
 	rm := &Rm{}
-	v5Header := []byte("reMarkable .lines file, version=5          ")
+	v5Header := []byte(HeaderV5)
 	v5Data := append(v5Header, []byte{1, 0, 0, 0}...) // 1 layer
 	v5Data = append(v5Data, []byte{0, 0, 0, 0}...)    // 0 lines
 	

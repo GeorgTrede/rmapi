@@ -203,7 +203,7 @@ func parseBlocks(r *Reader) ([]Line, error) {
 		if blockType == BlockTypeSceneLineItem {
 			line, err := parseLineBlock(blockData, version)
 			if err != nil {
-				// Log but continue - partial extraction is better than nothing
+				// Skip failed blocks and continue - partial extraction is better than nothing
 				continue
 			}
 			lines = append(lines, line)
@@ -224,8 +224,8 @@ func readBlockHeader(r *Reader) (blockType byte, size uint64, version byte, err 
 
 	blockType = byte(tag & 0x0F)
 	
-	// Read min version
-	minVer, err := r.ReadVarUint()
+	// Read min version (not currently used for validation)
+	_, err = r.ReadVarUint()
 	if err != nil {
 		return 0, 0, 0, err
 	}
@@ -242,8 +242,6 @@ func readBlockHeader(r *Reader) (blockType byte, size uint64, version byte, err 
 	if err != nil {
 		return 0, 0, 0, err
 	}
-
-	_ = minVer // unused
 	
 	return blockType, size, version, nil
 }
