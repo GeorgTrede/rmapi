@@ -177,6 +177,7 @@ func (p *PdfGenerator) Generate() error {
 					// Use actual line color instead of hardcoded yellow
 					r, g, b := brushColorToRGB(line.BrushColor)
 					lineDef.LineColor = pdf.NewPdfColorDeviceRGB(r, g, b)
+					// Opacity 0.3 matches Python rmc library's Highlighter.base_opacity
 					lineDef.Opacity = 0.3
 					lineDef.LineWidth = width
 					ann, err := annotator.CreateLineAnnotation(lineDef)
