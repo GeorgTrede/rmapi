@@ -4,6 +4,7 @@
 *.so
 *.dylib
 rmapi
+rmapi-test
 
 # Test binary, build with `go test -c`
 *.test
