@@ -66,12 +66,16 @@ func (r *reader) checkHeader() error {
 	}
 
 	switch string(buf) {
+	case HeaderV6:
+		// V6 format is not supported - it's a completely different scene-based format
+		// used by reMarkable software version 3+
+		return fmt.Errorf("V6 format is not supported (reMarkable software v3+). This file uses a different format that requires updated parsing code")
 	case HeaderV5:
 		r.version = V5
 	case HeaderV3:
 		r.version = V3
 	default:
-		return fmt.Errorf("Unknown header")
+		return fmt.Errorf("Unknown header: %q", string(buf))
 	}
 
 	return nil
@@ -105,6 +109,7 @@ func (r *reader) readLine() (Line, error) {
 	}
 
 	// this new attribute has been added in v5
+	// Note: V6 is a completely different format and is not supported here
 	if r.version == V5 {
 		if err := binary.Read(r, binary.LittleEndian, &line.Unknown); err != nil {
 			return line, fmt.Errorf("Failed to read line")
