@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"math"
 
 	"os"
 
@@ -45,11 +46,11 @@ func CreatePdfGenerator(zipName, outputFilePath string, options PdfGeneratorOpti
 // getBoundingBox calculates the bounding box of all points in the rm data.
 // Returns the actual content bounds for proper coordinate transformation.
 func getBoundingBox(rmData *rm.Rm) (xMin, xMax, yMin, yMax float64) {
-	// Initialize with extreme values
-	xMin = float64(9999)
-	xMax = float64(-9999)
-	yMin = float64(9999)
-	yMax = float64(-9999)
+	// Initialize with extreme values using math constants
+	xMin = math.MaxFloat64
+	xMax = -math.MaxFloat64
+	yMin = math.MaxFloat64
+	yMax = -math.MaxFloat64
 
 	hasPoints := false
 	for _, layer := range rmData.Layers {
@@ -199,14 +200,15 @@ func (p *PdfGenerator) Generate() error {
 		// Calculate bounding box from actual content for proper positioning
 		xMin, _, yMin, _ := getBoundingBox(pageAnnotations.Data)
 
-		// Create ExtGState for highlighter transparency (CA = stroke alpha)
-		// Matches Python rmc library's Highlighter.base_opacity = 0.3
+		// Create ExtGState for highlighter transparency
+		// CA = stroke alpha, ca = fill alpha (both needed for consistent transparency)
+		// Value 0.3 matches Python rmc library's Highlighter.base_opacity
 		highlightGsDict := core.MakeDict()
 		highlightGsDict.Set("Type", core.MakeName("ExtGState"))
-		highlightGsDict.Set("CA", core.MakeFloat(0.3)) // stroke opacity
-		highlightGsDict.Set("ca", core.MakeFloat(0.3)) // fill opacity (for completeness)
+		highlightGsDict.Set("CA", core.MakeFloat(0.3))
+		highlightGsDict.Set("ca", core.MakeFloat(0.3))
 
-		// Opaque state for normal strokes
+		// Opaque state for normal strokes (restore full opacity after highlighters)
 		opaqueGsDict := core.MakeDict()
 		opaqueGsDict.Set("Type", core.MakeName("ExtGState"))
 		opaqueGsDict.Set("CA", core.MakeFloat(1.0))
