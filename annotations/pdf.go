@@ -43,8 +43,40 @@ func CreatePdfGenerator(zipName, outputFilePath string, options PdfGeneratorOpti
 	return &PdfGenerator{zipName: zipName, outputFilePath: outputFilePath, options: options}
 }
 
-func normalized(p1 rm.Point, ratioX float64) (float64, float64) {
-	return float64(p1.X) * ratioX, float64(p1.Y) * ratioX
+// getBoundingBox calculates the bounding box of all points in the rm data
+func getBoundingBox(rmData *rm.Rm) (xMin, xMax, yMin, yMax float64) {
+	// Default bounding box matching Python rmscene
+	xMin = float64(-DeviceWidth) / 2
+	xMax = float64(DeviceWidth) / 2
+	yMin = 0
+	yMax = float64(DeviceHeight)
+
+	for _, layer := range rmData.Layers {
+		for _, line := range layer.Lines {
+			for _, point := range line.Points {
+				if float64(point.X) < xMin {
+					xMin = float64(point.X)
+				}
+				if float64(point.X) > xMax {
+					xMax = float64(point.X)
+				}
+				if float64(point.Y) < yMin {
+					yMin = float64(point.Y)
+				}
+				if float64(point.Y) > yMax {
+					yMax = float64(point.Y)
+				}
+			}
+		}
+	}
+	return
+}
+
+func normalized(p1 rm.Point, ratioX float64, xOffset, yOffset float64) (float64, float64) {
+	// Shift coordinates by offsets to make them positive for PDF
+	x := (float64(p1.X) - xOffset) * ratioX
+	y := (float64(p1.Y) - yOffset) * ratioX
+	return x, y
 }
 
 // brushColorToRGB converts a BrushColor to RGB values (0.0-1.0)
@@ -153,6 +185,9 @@ func (p *PdfGenerator) Generate() error {
 			continue
 		}
 
+		// Calculate bounding box for V6 format coordinate translation
+		xMin, _, yMin, _ := getBoundingBox(pageAnnotations.Data)
+
 		contentCreator := contentstream.NewContentCreator()
 		contentCreator.Add_q()
 
@@ -167,8 +202,8 @@ func (p *PdfGenerator) Generate() error {
 
 				if line.BrushType == rm.HighlighterV5 || line.BrushType == rm.Highlighter {
 					last := len(line.Points) - 1
-					x1, y1 := normalized(line.Points[0], scale)
-					x2, _ := normalized(line.Points[last], scale)
+					x1, y1 := normalized(line.Points[0], scale, xMin, yMin)
+					x2, _ := normalized(line.Points[last], scale, xMin, yMin)
 					// make horizontal lines only, use y1
 					width := scale * 30
 					y1 += width / 2
@@ -188,7 +223,7 @@ func (p *PdfGenerator) Generate() error {
 				} else {
 					path := draw.NewPath()
 					for i := 0; i < len(line.Points); i++ {
-						x1, y1 := normalized(line.Points[i], scale)
+						x1, y1 := normalized(line.Points[i], scale, xMin, yMin)
 						path = path.AppendPoint(draw.NewPoint(x1, c.Height()-y1))
 					}
 
