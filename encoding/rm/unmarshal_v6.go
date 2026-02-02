@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"strings"
 )
 
 // Block types (based on rmscene Python library)
@@ -212,8 +213,8 @@ func UnmarshalV6(data []byte) (*Rm, error) {
 		return nil, fmt.Errorf("invalid V6 header: %q", string(header))
 	}
 
-	// Parse blocks and extract lines
-	lines, err := parseV6Blocks(r)
+	// Parse blocks and extract lines and text
+	lines, textItems, err := parseV6Blocks(r)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse blocks: %w", err)
 	}
@@ -223,16 +224,17 @@ func UnmarshalV6(data []byte) (*Rm, error) {
 	result := &Rm{
 		Version: V6,
 		Layers: []Layer{
-			{Lines: lines},
+			{Lines: lines, Text: textItems},
 		},
 	}
 
 	return result, nil
 }
 
-// parseV6Blocks reads all blocks from the stream and extracts line items
-func parseV6Blocks(r *V6Reader) ([]Line, error) {
+// parseV6Blocks reads all blocks from the stream and extracts line and text items
+func parseV6Blocks(r *V6Reader) ([]Line, []TextItem, error) {
 	var lines []Line
+	var textItems []TextItem
 
 	for r.Remaining() > 0 {
 		// Read block header
@@ -241,10 +243,10 @@ func parseV6Blocks(r *V6Reader) ([]Line, error) {
 			break
 		}
 		if err != nil {
-			return lines, fmt.Errorf("failed to read block header: %w", err)
+			return lines, textItems, fmt.Errorf("failed to read block header: %w", err)
 		}
 
-		// Parse line items only
+		// Parse line items
 		if blockType == BlockTypeSceneLineItem {
 			line, err := parseV6LineBlock(blockData, version)
 			if err != nil {
@@ -255,18 +257,35 @@ func parseV6Blocks(r *V6Reader) ([]Line, error) {
 				lines = append(lines, line)
 			}
 		}
+
+		// Parse root text block
+		if blockType == BlockTypeRootText {
+			textItem, err := parseV6RootTextBlock(blockData)
+			if err != nil {
+				// Skip failed blocks and continue
+				continue
+			}
+			if len(textItem.Paragraphs) > 0 {
+				textItems = append(textItems, textItem)
+			}
+		}
 	}
 
-	return lines, nil
+	return lines, textItems, nil
 }
 
 // readV6BlockHeader reads a block header and returns the block data
-// Block format: uint32 length, uint8 unknown, uint8 min_ver, uint8 cur_ver, uint8 block_type, then data
+// Block format: uint32 length (includes header), uint8 unknown, uint8 min_ver, uint8 cur_ver, uint8 block_type, then data, then 4-byte CRC
 func readV6BlockHeader(r *V6Reader) (blockType byte, data []byte, version byte, err error) {
-	// Read block length
+	// Read block length - this INCLUDES the 4 header bytes but NOT the length field itself
 	blockLength, err := r.ReadUint32()
 	if err != nil {
 		return 0, nil, 0, err
+	}
+
+	// Validate length
+	if blockLength < 4 {
+		return 0, nil, 0, fmt.Errorf("invalid block length: %d", blockLength)
 	}
 
 	// Read unknown byte (should be 0)
@@ -294,13 +313,21 @@ func readV6BlockHeader(r *V6Reader) (blockType byte, data []byte, version byte, 
 	}
 
 	// Read block data
-	// The block_length field specifies the size of data AFTER the 4-byte header
-	// Structure: <4-byte length><4-byte header><length bytes of data>
-	dataSize := int(blockLength)
+	// Content size is blockLength - 4 (subtract the 4 header bytes we just read)
+	dataSize := int(blockLength) - 4
 	if dataSize > 0 {
 		data, err = r.ReadBytes(dataSize)
 		if err != nil {
 			return 0, nil, 0, fmt.Errorf("failed to read block data of size %d: %w", dataSize, err)
+		}
+	}
+
+	// Skip CRC (4 bytes after each block)
+	_, err = r.ReadBytes(4)
+	if err != nil {
+		// CRC might be missing at end of file, that's ok
+		if err != io.EOF {
+			return 0, nil, 0, fmt.Errorf("failed to read CRC: %w", err)
 		}
 	}
 
@@ -611,4 +638,202 @@ func mapColorToV5(color int) BrushColor {
 	default:
 		return Black
 	}
+}
+
+// parseV6RootTextBlock parses a RootText block and extracts text content
+// RootText structure: contains tagged fields for text items and styles
+func parseV6RootTextBlock(data []byte) (TextItem, error) {
+r := NewV6Reader(data)
+var textItem TextItem
+
+// Read tagged fields
+for r.Remaining() > 0 {
+index, tagType, err := r.ReadTag()
+if err == io.EOF {
+break
+}
+if err != nil {
+return textItem, err
+}
+
+switch index {
+case 1: // block_id (CRDT ID) - skip
+if err := r.SkipTagValue(tagType); err != nil {
+return textItem, err
+}
+case 2: // pos_x (float64)
+if tagType == TagByte8 {
+posX, err := r.ReadFloat64()
+if err != nil {
+return textItem, err
+}
+textItem.PosX = posX
+} else {
+if err := r.SkipTagValue(tagType); err != nil {
+return textItem, err
+}
+}
+case 3: // pos_y (float64)
+if tagType == TagByte8 {
+posY, err := r.ReadFloat64()
+if err != nil {
+return textItem, err
+}
+textItem.PosY = posY
+} else {
+if err := r.SkipTagValue(tagType); err != nil {
+return textItem, err
+}
+}
+case 4: // width (float64)
+if tagType == TagByte8 {
+width, err := r.ReadFloat64()
+if err != nil {
+return textItem, err
+}
+textItem.Width = width
+} else {
+if err := r.SkipTagValue(tagType); err != nil {
+return textItem, err
+}
+}
+case 5: // text items subblock
+if tagType == TagLength4 {
+subSize, err := r.ReadUint32()
+if err != nil {
+return textItem, err
+}
+textData, err := r.ReadBytes(int(subSize))
+if err != nil {
+return textItem, err
+}
+paragraphs := parseV6TextContent(textData)
+textItem.Paragraphs = paragraphs
+} else {
+if err := r.SkipTagValue(tagType); err != nil {
+return textItem, err
+}
+}
+case 6: // styles subblock
+if tagType == TagLength4 {
+subSize, err := r.ReadUint32()
+if err != nil {
+return textItem, err
+}
+// Skip styles for now - we extract text content directly
+_, err = r.ReadBytes(int(subSize))
+if err != nil {
+return textItem, err
+}
+} else {
+if err := r.SkipTagValue(tagType); err != nil {
+return textItem, err
+}
+}
+default:
+if err := r.SkipTagValue(tagType); err != nil {
+return textItem, err
+}
+}
+}
+
+return textItem, nil
+}
+
+// parseV6TextContent extracts text content from the text items subblock
+// This is a simplified parser that extracts readable text
+func parseV6TextContent(data []byte) []TextParagraph {
+var paragraphs []TextParagraph
+
+// The text content is stored as CRDT sequence items
+// Each item has: item_id, left_id, right_id, deleted_length, value
+// For simplicity, we extract text bytes directly
+
+r := NewV6Reader(data)
+var currentText strings.Builder
+currentStyle := TextStylePlain
+
+for r.Remaining() > 0 {
+// Read tag
+index, tagType, err := r.ReadTag()
+if err != nil {
+break
+}
+
+switch index {
+case 1: // item_id - CRDT ID
+if err := r.SkipTagValue(tagType); err != nil {
+break
+}
+case 2: // left_id - CRDT ID  
+if err := r.SkipTagValue(tagType); err != nil {
+break
+}
+case 3: // right_id - CRDT ID
+if err := r.SkipTagValue(tagType); err != nil {
+break
+}
+case 4: // deleted_length (uint32)
+if tagType == TagByte4 {
+_, err := r.ReadUint32()
+if err != nil {
+break
+}
+} else {
+if err := r.SkipTagValue(tagType); err != nil {
+break
+}
+}
+case 5: // value - the actual text content
+if tagType == TagLength4 {
+subSize, err := r.ReadUint32()
+if err != nil {
+break
+}
+textBytes, err := r.ReadBytes(int(subSize))
+if err != nil {
+break
+}
+text := string(textBytes)
+// Handle newlines as paragraph breaks
+for _, char := range text {
+if char == '\n' {
+if currentText.Len() > 0 {
+paragraphs = append(paragraphs, TextParagraph{
+Style: currentStyle,
+Text:  currentText.String(),
+})
+currentText.Reset()
+}
+} else {
+currentText.WriteRune(char)
+}
+}
+} else if tagType == TagByte4 {
+// Format code (bold, italic, etc) - skip
+_, err := r.ReadUint32()
+if err != nil {
+break
+}
+} else {
+if err := r.SkipTagValue(tagType); err != nil {
+break
+}
+}
+default:
+if err := r.SkipTagValue(tagType); err != nil {
+break
+}
+}
+}
+
+// Add remaining text as final paragraph
+if currentText.Len() > 0 {
+paragraphs = append(paragraphs, TextParagraph{
+Style: currentStyle,
+Text:  currentText.String(),
+})
+}
+
+return paragraphs
 }
