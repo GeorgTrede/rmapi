@@ -114,7 +114,7 @@ type Content struct {
 	// Orientation can take "portrait" or "landscape".
 	Orientation string `json:"orientation"`
 	PageCount   int    `json:"pageCount"`
-	// Pages is a list of page IDs
+	// Pages is a list of page IDs (legacy format)
 	Pages           []string  `json:"pages"`
 	PageTags        []PageTag `json:"pageTags"`
 	DocumentTags    []Tag     `json:"tags"`
@@ -122,7 +122,27 @@ type Content struct {
 	TextScale       float64   `json:"textScale"`
 	CoverPageNumber *int      `json:"coverPageNumber,omitempty"`
 
+	// CPages is the new v6 format for page information
+	CPages *CPages `json:"cPages,omitempty"`
+
 	Transform *Transform `json:"-"`
+}
+
+// CPages represents the new v6 format for page information
+type CPages struct {
+	Pages []CPage `json:"pages"`
+}
+
+// CPage represents a page entry in the new v6 cPages format
+type CPage struct {
+	ID      string          `json:"id"`
+	Deleted *CPageTimestamp `json:"deleted,omitempty"`
+}
+
+// CPageTimestamp represents a timestamped value in cPages
+type CPageTimestamp struct {
+	Timestamp string `json:"timestamp"`
+	Value     int    `json:"value"`
 }
 
 // ExtraMetadata is a struct contained into a Content struct.
