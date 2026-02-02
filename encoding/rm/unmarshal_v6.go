@@ -275,12 +275,17 @@ func parseV6Blocks(r *V6Reader) ([]Line, []TextItem, error) {
 }
 
 // readV6BlockHeader reads a block header and returns the block data
-// Block format: uint32 length, uint8 unknown, uint8 min_ver, uint8 cur_ver, uint8 block_type, then data
+// Block format: uint32 length (includes header), uint8 unknown, uint8 min_ver, uint8 cur_ver, uint8 block_type, then data, then 4-byte CRC
 func readV6BlockHeader(r *V6Reader) (blockType byte, data []byte, version byte, err error) {
-	// Read block length
+	// Read block length - this INCLUDES the 4 header bytes but NOT the length field itself
 	blockLength, err := r.ReadUint32()
 	if err != nil {
 		return 0, nil, 0, err
+	}
+
+	// Validate length
+	if blockLength < 4 {
+		return 0, nil, 0, fmt.Errorf("invalid block length: %d", blockLength)
 	}
 
 	// Read unknown byte (should be 0)
@@ -308,13 +313,21 @@ func readV6BlockHeader(r *V6Reader) (blockType byte, data []byte, version byte, 
 	}
 
 	// Read block data
-	// The block_length field specifies the size of data AFTER the 4-byte header
-	// Structure: <4-byte length><4-byte header><length bytes of data>
-	dataSize := int(blockLength)
+	// Content size is blockLength - 4 (subtract the 4 header bytes we just read)
+	dataSize := int(blockLength) - 4
 	if dataSize > 0 {
 		data, err = r.ReadBytes(dataSize)
 		if err != nil {
 			return 0, nil, 0, fmt.Errorf("failed to read block data of size %d: %w", dataSize, err)
+		}
+	}
+
+	// Skip CRC (4 bytes after each block)
+	_, err = r.ReadBytes(4)
+	if err != nil {
+		// CRC might be missing at end of file, that's ok
+		if err != io.EOF {
+			return 0, nil, 0, fmt.Errorf("failed to read CRC: %w", err)
 		}
 	}
 
