@@ -10,7 +10,6 @@ import (
 	"github.com/juruen/rmapi/archive"
 	"github.com/juruen/rmapi/encoding/rm"
 	"github.com/juruen/rmapi/log"
-	"github.com/unidoc/unipdf/v3/annotator"
 	"github.com/unidoc/unipdf/v3/contentstream"
 	"github.com/unidoc/unipdf/v3/contentstream/draw"
 	"github.com/unidoc/unipdf/v3/core"
@@ -201,25 +200,30 @@ func (p *PdfGenerator) Generate() error {
 				}
 
 				if line.BrushType == rm.HighlighterV5 || line.BrushType == rm.Highlighter {
-					last := len(line.Points) - 1
-					x1, y1 := normalized(line.Points[0], scale, xMin, yMin)
-					x2, _ := normalized(line.Points[last], scale, xMin, yMin)
-					// make horizontal lines only, use y1
-					width := scale * 30
-					y1 += width / 2
-
-					lineDef := annotator.LineAnnotationDef{X1: x1 - 1, Y1: c.Height() - y1, X2: x2, Y2: c.Height() - y1}
-					// Use actual line color instead of hardcoded yellow
-					r, g, b := brushColorToRGB(line.BrushColor)
-					lineDef.LineColor = pdf.NewPdfColorDeviceRGB(r, g, b)
-					// Opacity 0.3 matches Python rmc library's Highlighter.base_opacity
-					lineDef.Opacity = 0.3
-					lineDef.LineWidth = width
-					ann, err := annotator.CreateLineAnnotation(lineDef)
-					if err != nil {
-						return err
+					// Draw highlighter as a semi-transparent polyline stroke
+					if len(line.Points) < 2 {
+						continue
 					}
-					page.AddAnnotation(ann)
+
+					path := draw.NewPath()
+					for i := 0; i < len(line.Points); i++ {
+						x1, y1 := normalized(line.Points[i], scale, xMin, yMin)
+						path = path.AppendPoint(draw.NewPoint(x1, c.Height()-y1))
+					}
+
+					// Highlighter uses wider stroke
+					strokeWidth := float64(line.BrushSize) * scale * 3.0
+					if strokeWidth < 5.0 {
+						strokeWidth = 5.0
+					}
+					contentCreator.Add_w(strokeWidth)
+
+					// Use actual color with transparency (using graphics state)
+					r, g, b := brushColorToRGB(line.BrushColor)
+					contentCreator.Add_RG(r, g, b)
+
+					draw.DrawPathWithCreator(path, contentCreator)
+					contentCreator.Add_S()
 				} else {
 					// Draw stroke using path
 					if len(line.Points) < 2 {
