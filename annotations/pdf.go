@@ -47,6 +47,36 @@ func normalized(p1 rm.Point, ratioX float64) (float64, float64) {
 	return float64(p1.X) * ratioX, float64(p1.Y) * ratioX
 }
 
+// brushColorToRGB converts a BrushColor to RGB values (0.0-1.0)
+func brushColorToRGB(color rm.BrushColor) (float64, float64, float64) {
+	switch color {
+	case rm.Black:
+		return 0.0, 0.0, 0.0
+	case rm.Grey, rm.GreyOverlap:
+		return 0.56, 0.56, 0.56 // 144/255
+	case rm.White:
+		return 1.0, 1.0, 1.0
+	case rm.Yellow, rm.Yellow2, rm.Highlight:
+		return 0.98, 0.97, 0.10 // 251, 247, 25
+	case rm.Green:
+		return 0.0, 1.0, 0.0
+	case rm.Green2:
+		return 0.63, 0.85, 0.49 // 161, 216, 125
+	case rm.Pink:
+		return 1.0, 0.75, 0.80 // 255, 192, 203
+	case rm.Blue:
+		return 0.31, 0.41, 0.79 // 78, 105, 201
+	case rm.Red:
+		return 0.70, 0.24, 0.22 // 179, 62, 57
+	case rm.Cyan:
+		return 0.55, 0.82, 0.90 // 139, 208, 229
+	case rm.Magenta:
+		return 0.72, 0.51, 0.80 // 183, 130, 205
+	default:
+		return 0.0, 0.0, 0.0 // Default to black
+	}
+}
+
 func (p *PdfGenerator) Generate() error {
 	file, err := os.Open(p.zipName)
 	if err != nil {
@@ -144,8 +174,10 @@ func (p *PdfGenerator) Generate() error {
 					y1 += width / 2
 
 					lineDef := annotator.LineAnnotationDef{X1: x1 - 1, Y1: c.Height() - y1, X2: x2, Y2: c.Height() - y1}
-					lineDef.LineColor = pdf.NewPdfColorDeviceRGB(1.0, 1.0, 0.0) //yellow
-					lineDef.Opacity = 0.5
+					// Use actual line color instead of hardcoded yellow
+					r, g, b := brushColorToRGB(line.BrushColor)
+					lineDef.LineColor = pdf.NewPdfColorDeviceRGB(r, g, b)
+					lineDef.Opacity = 0.3
 					lineDef.LineWidth = width
 					ann, err := annotator.CreateLineAnnotation(lineDef)
 					if err != nil {
@@ -161,30 +193,9 @@ func (p *PdfGenerator) Generate() error {
 
 					contentCreator.Add_w(float64(line.BrushSize*6.0 - 10.8))
 
-					switch line.BrushColor {
-					case rm.Black:
-						contentCreator.Add_rg(1.0, 1.0, 1.0)
-					case rm.White:
-						contentCreator.Add_rg(0.0, 0.0, 0.0)
-					case rm.Grey, rm.GreyOverlap:
-						contentCreator.Add_rg(0.8, 0.8, 0.8)
-					case rm.Yellow, rm.Yellow2, rm.Highlight:
-						contentCreator.Add_rg(0.016, 0.032, 0.902) // Yellow (inverted for stroke)
-					case rm.Green, rm.Green2:
-						contentCreator.Add_rg(1.0, 0.0, 1.0) // Green (inverted)
-					case rm.Pink:
-						contentCreator.Add_rg(0.0, 0.247, 0.204) // Pink (inverted)
-					case rm.Blue:
-						contentCreator.Add_rg(0.694, 0.588, 0.212) // Blue (inverted)
-					case rm.Red:
-						contentCreator.Add_rg(0.298, 0.757, 0.776) // Red (inverted)
-					case rm.Cyan:
-						contentCreator.Add_rg(0.455, 0.184, 0.102) // Cyan (inverted)
-					case rm.Magenta:
-						contentCreator.Add_rg(0.282, 0.490, 0.196) // Magenta (inverted)
-					default:
-						contentCreator.Add_rg(1.0, 1.0, 1.0) // Default to black stroke
-					}
+					// Use actual color for strokes
+					r, g, b := brushColorToRGB(line.BrushColor)
+					contentCreator.Add_RG(r, g, b) // Add_RG sets stroke color
 
 					//TODO: use bezier
 					draw.DrawPathWithCreator(path, contentCreator)

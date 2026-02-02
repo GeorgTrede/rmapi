@@ -165,8 +165,9 @@ func renderToSVG(rmData *rm.Rm) string {
 			isHighlighter := line.BrushType == rm.Highlighter || line.BrushType == rm.HighlighterV5
 			opacity := 1.0
 			if isHighlighter {
-				color = "rgb(251,247,25)" // Yellow from RM_PALETTE
-				opacity = 0.5
+				// Use the actual line color for highlighters, don't override to yellow
+				// Python highlighter uses the color_id from the line data
+				opacity = 0.3
 				strokeWidth = 15.0
 			}
 
