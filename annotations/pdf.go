@@ -131,11 +131,11 @@ func (p *PdfGenerator) Generate() error {
 				if len(line.Points) < 1 {
 					continue
 				}
-				if line.BrushType == rm.Eraser {
+				if line.BrushType == rm.Eraser || line.BrushType == rm.EraseArea {
 					continue
 				}
 
-				if line.BrushType == rm.HighlighterV5 {
+				if line.BrushType == rm.HighlighterV5 || line.BrushType == rm.Highlighter {
 					last := len(line.Points) - 1
 					x1, y1 := normalized(line.Points[0], scale)
 					x2, _ := normalized(line.Points[last], scale)
@@ -166,8 +166,24 @@ func (p *PdfGenerator) Generate() error {
 						contentCreator.Add_rg(1.0, 1.0, 1.0)
 					case rm.White:
 						contentCreator.Add_rg(0.0, 0.0, 0.0)
-					case rm.Grey:
+					case rm.Grey, rm.GreyOverlap:
 						contentCreator.Add_rg(0.8, 0.8, 0.8)
+					case rm.Yellow, rm.Yellow2, rm.Highlight:
+						contentCreator.Add_rg(0.016, 0.032, 0.902) // Yellow (inverted for stroke)
+					case rm.Green, rm.Green2:
+						contentCreator.Add_rg(1.0, 0.0, 1.0) // Green (inverted)
+					case rm.Pink:
+						contentCreator.Add_rg(0.0, 0.247, 0.204) // Pink (inverted)
+					case rm.Blue:
+						contentCreator.Add_rg(0.694, 0.588, 0.212) // Blue (inverted)
+					case rm.Red:
+						contentCreator.Add_rg(0.298, 0.757, 0.776) // Red (inverted)
+					case rm.Cyan:
+						contentCreator.Add_rg(0.455, 0.184, 0.102) // Cyan (inverted)
+					case rm.Magenta:
+						contentCreator.Add_rg(0.282, 0.490, 0.196) // Magenta (inverted)
+					default:
+						contentCreator.Add_rg(1.0, 1.0, 1.0) // Default to black stroke
 					}
 
 					//TODO: use bezier

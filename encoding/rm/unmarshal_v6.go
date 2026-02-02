@@ -577,15 +577,37 @@ func mapPenToV5BrushType(penType int) BrushType {
 	}
 }
 
-// mapColorToV5 maps V6 color types to V5 colors
+// mapColorToV5 maps V6 color types to BrushColor
 func mapColorToV5(color int) BrushColor {
 	switch color {
 	case ColorBlack:
 		return Black
-	case ColorGrey, ColorGreyOverlap:
+	case ColorGrey:
 		return Grey
 	case ColorWhite:
 		return White
+	case ColorYellow:
+		return Yellow
+	case ColorGreen:
+		return Green
+	case ColorPink:
+		return Pink
+	case ColorBlue:
+		return Blue
+	case ColorRed:
+		return Red
+	case ColorGreyOverlap:
+		return GreyOverlap
+	case ColorHighlight:
+		return Highlight
+	case ColorGreen2:
+		return Green2
+	case ColorCyan:
+		return Cyan
+	case ColorMagenta:
+		return Magenta
+	case ColorYellow2:
+		return Yellow2
 	default:
 		return Black
 	}

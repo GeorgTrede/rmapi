@@ -61,14 +61,28 @@ const (
 	Height int = 1872
 )
 
-// BrushColor defines the 3 colors of the brush.
+// BrushColor defines the colors of the brush.
 type BrushColor uint32
 
-// Mapping of the three colors.
+// Mapping of brush colors.
+// V3/V5 only supported Black, Grey, White.
+// V6 adds many more colors.
 const (
 	Black BrushColor = 0
 	Grey  BrushColor = 1
 	White BrushColor = 2
+	// V6 colors
+	Yellow      BrushColor = 3
+	Green       BrushColor = 4
+	Pink        BrushColor = 5
+	Blue        BrushColor = 6
+	Red         BrushColor = 7
+	GreyOverlap BrushColor = 8
+	Highlight   BrushColor = 9
+	Green2      BrushColor = 10
+	Cyan        BrushColor = 11
+	Magenta     BrushColor = 12
+	Yellow2     BrushColor = 13
 )
 
 // BrushType respresents the type of brush.

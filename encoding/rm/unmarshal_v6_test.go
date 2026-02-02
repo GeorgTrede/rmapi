@@ -112,17 +112,25 @@ func TestMapPenToV5BrushType(t *testing.T) {
 }
 
 func TestMapColorToV5(t *testing.T) {
-	// Test color mapping
+	// Test color mapping - now preserves all V6 colors
 	tests := []struct {
 		color    int
 		expected BrushColor
 	}{
 		{ColorBlack, Black},
 		{ColorGrey, Grey},
-		{ColorGreyOverlap, Grey},
+		{ColorGreyOverlap, GreyOverlap},
 		{ColorWhite, White},
-		{ColorYellow, Black}, // Non-standard colors default to black
-		{ColorGreen, Black},
+		{ColorYellow, Yellow},
+		{ColorGreen, Green},
+		{ColorPink, Pink},
+		{ColorBlue, Blue},
+		{ColorRed, Red},
+		{ColorHighlight, Highlight},
+		{ColorGreen2, Green2},
+		{ColorCyan, Cyan},
+		{ColorMagenta, Magenta},
+		{ColorYellow2, Yellow2},
 	}
 	
 	for _, tt := range tests {
