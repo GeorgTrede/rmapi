@@ -127,6 +127,13 @@ func (r *Reader) ReadUint16() (uint16, error) {
 	return v, err
 }
 
+// ReadUint32 reads a uint32
+func (r *Reader) ReadUint32() (uint32, error) {
+	var v uint32
+	err := binary.Read(r.r, binary.LittleEndian, &v)
+	return v, err
+}
+
 // ReadFloat32 reads a float32
 func (r *Reader) ReadFloat32() (float32, error) {
 	var v float32
@@ -215,44 +222,121 @@ func parseBlocks(r *Reader) ([]Line, error) {
 }
 
 // readBlockHeader reads a block header
-func readBlockHeader(r *Reader) (blockType byte, size uint64, version byte, err error) {
-	// Read block header tag
-	tag, err := r.ReadVarUint()
+// Block format: uint32 length, uint8 unknown, uint8 min_ver, uint8 cur_ver, uint8 block_type
+func readBlockHeader(r *Reader) (blockType byte, size uint32, version byte, err error) {
+	// Read block length
+	blockLength, err := r.ReadUint32()
 	if err != nil {
 		return 0, 0, 0, err
 	}
-
-	blockType = byte(tag & 0x0F)
+	
+	// Read unknown byte (should be 0)
+	_, err = r.ReadUint8()
+	if err != nil {
+		return 0, 0, 0, err
+	}
 	
 	// Read min version (not currently used for validation)
-	_, err = r.ReadVarUint()
+	_, err = r.ReadUint8()
 	if err != nil {
 		return 0, 0, 0, err
 	}
 	
 	// Read current version
-	curVer, err := r.ReadVarUint()
+	curVer, err := r.ReadUint8()
 	if err != nil {
 		return 0, 0, 0, err
 	}
-	version = byte(curVer)
 	
-	// Read block size
-	size, err = r.ReadVarUint()
+	// Read block type
+	blockType, err = r.ReadUint8()
 	if err != nil {
 		return 0, 0, 0, err
 	}
+	
+	// Block size is the length minus the header bytes already read (4 bytes: unknown + minver + curver + type)
+	size = blockLength
+	version = curVer
 	
 	return blockType, size, version, nil
 }
 
 // parseLineBlock parses a SceneLineItem block
+// SceneItemBlock structure: parent_id(1), item_id(2), left_id(3), right_id(4), deleted_length(5), value subblock(6)
 func parseLineBlock(data []byte, blockVersion byte) (Line, error) {
 	r := NewReader(bytes.NewReader(data))
 	
 	var line Line
 	
-	// Read tagged fields
+	// Skip the CRDT structure fields (parent_id, item_id, left_id, right_id, deleted_length)
+	// We only care about the value subblock at index 6
+	for {
+		// Read tag
+		tagValue, err := r.ReadVarUint()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return line, err
+		}
+		
+		index := tagValue >> 4
+		tagType := tagValue & 0x0F
+		
+		// Skip fields we don't need
+		if index < 6 {
+			// Skip based on tag type
+			switch tagType {
+			case TagID1, TagID2: // CRDT IDs (2 varuints)
+				r.ReadVarUint()
+				r.ReadVarUint()
+			case TagInt: // Int32
+				r.ReadInt32()
+			case TagByte:
+				r.ReadUint8()
+			}
+			continue
+		}
+		
+		// Index 6 is the value subblock containing the actual Line data
+		if index == 6 && tagType == TagLength4 {
+			// Read subblock size
+			subSize, err := r.ReadUint32()
+			if err != nil {
+				return line, err
+			}
+			
+			// Read item type (should be 0x03 for Line)
+			itemType, err := r.ReadUint8()
+			if err != nil {
+				return line, err
+			}
+			if itemType != 0x03 {
+				// Not a line item, skip
+				return line, fmt.Errorf("unexpected item type: 0x%02x", itemType)
+			}
+			
+			// Now read the actual Line data (subSize - 1 bytes, since we already read itemType)
+			lineData, err := r.ReadBytes(int(subSize) - 1)
+			if err != nil {
+				return line, err
+			}
+			
+			// Parse the Line data
+			return parseLineData(lineData, blockVersion)
+		}
+	}
+	
+	return line, nil
+}
+
+// parseLineData parses the actual Line data from within the value subblock
+func parseLineData(data []byte, blockVersion byte) (Line, error) {
+	r := NewReader(bytes.NewReader(data))
+	
+	var line Line
+	
+	// Read tagged fields for the Line
 	for {
 		// Read tag
 		tagValue, err := r.ReadVarUint()
@@ -293,8 +377,8 @@ func parseLineBlock(data []byte, blockVersion byte) (Line, error) {
 			}
 		case 5: // points data (subblock)
 			if tagType == TagLength4 {
-				// Read subblock size
-				subSize, err := r.ReadVarUint()
+				// Read subblock size (uint32)
+				subSize, err := r.ReadUint32()
 				if err != nil {
 					return line, err
 				}
@@ -304,6 +388,11 @@ func parseLineBlock(data []byte, blockVersion byte) (Line, error) {
 					return line, err
 				}
 				line.Points = points
+			}
+		case 6: // timestamp (CRDT ID) - skip
+			if tagType == TagID1 || tagType == TagID2 {
+				r.ReadVarUint()
+				r.ReadVarUint()
 			}
 		}
 	}
