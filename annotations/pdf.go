@@ -4,13 +4,13 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"math"
 
 	"os"
 
 	"github.com/juruen/rmapi/archive"
 	"github.com/juruen/rmapi/encoding/rm"
 	"github.com/juruen/rmapi/log"
-	"github.com/unidoc/unipdf/v3/annotator"
 	"github.com/unidoc/unipdf/v3/contentstream"
 	"github.com/unidoc/unipdf/v3/contentstream/draw"
 	"github.com/unidoc/unipdf/v3/core"
@@ -43,8 +43,82 @@ func CreatePdfGenerator(zipName, outputFilePath string, options PdfGeneratorOpti
 	return &PdfGenerator{zipName: zipName, outputFilePath: outputFilePath, options: options}
 }
 
-func normalized(p1 rm.Point, ratioX float64) (float64, float64) {
-	return float64(p1.X) * ratioX, float64(p1.Y) * ratioX
+// getBoundingBox calculates the bounding box of all points in the rm data.
+// Returns the actual content bounds for proper coordinate transformation.
+func getBoundingBox(rmData *rm.Rm) (xMin, xMax, yMin, yMax float64) {
+	// Initialize with extreme values using math constants
+	xMin = math.MaxFloat64
+	xMax = -math.MaxFloat64
+	yMin = math.MaxFloat64
+	yMax = -math.MaxFloat64
+
+	hasPoints := false
+	for _, layer := range rmData.Layers {
+		for _, line := range layer.Lines {
+			for _, point := range line.Points {
+				hasPoints = true
+				if float64(point.X) < xMin {
+					xMin = float64(point.X)
+				}
+				if float64(point.X) > xMax {
+					xMax = float64(point.X)
+				}
+				if float64(point.Y) < yMin {
+					yMin = float64(point.Y)
+				}
+				if float64(point.Y) > yMax {
+					yMax = float64(point.Y)
+				}
+			}
+		}
+	}
+
+	// If no points, use default canvas
+	if !hasPoints {
+		xMin = float64(-DeviceWidth) / 2
+		xMax = float64(DeviceWidth) / 2
+		yMin = 0
+		yMax = float64(DeviceHeight)
+	}
+
+	return
+}
+
+func normalized(p1 rm.Point, ratioX float64, xOffset, yOffset float64) (float64, float64) {
+	// Shift coordinates by offsets to make them positive for PDF
+	x := (float64(p1.X) - xOffset) * ratioX
+	y := (float64(p1.Y) - yOffset) * ratioX
+	return x, y
+}
+
+// brushColorToRGB converts a BrushColor to RGB values (0.0-1.0)
+func brushColorToRGB(color rm.BrushColor) (float64, float64, float64) {
+	switch color {
+	case rm.Black:
+		return 0.0, 0.0, 0.0
+	case rm.Grey, rm.GreyOverlap:
+		return 0.56, 0.56, 0.56 // 144/255
+	case rm.White:
+		return 1.0, 1.0, 1.0
+	case rm.Yellow, rm.Yellow2, rm.Highlight:
+		return 0.98, 0.97, 0.10 // 251, 247, 25
+	case rm.Green:
+		return 0.0, 1.0, 0.0
+	case rm.Green2:
+		return 0.63, 0.85, 0.49 // 161, 216, 125
+	case rm.Pink:
+		return 1.0, 0.75, 0.80 // 255, 192, 203
+	case rm.Blue:
+		return 0.31, 0.41, 0.79 // 78, 105, 201
+	case rm.Red:
+		return 0.70, 0.24, 0.22 // 179, 62, 57
+	case rm.Cyan:
+		return 0.55, 0.82, 0.90 // 139, 208, 229
+	case rm.Magenta:
+		return 0.72, 0.51, 0.80 // 183, 130, 205
+	default:
+		return 0.0, 0.0, 0.0 // Default to black
+	}
 }
 
 func (p *PdfGenerator) Generate() error {
@@ -123,6 +197,30 @@ func (p *PdfGenerator) Generate() error {
 			continue
 		}
 
+		// Calculate bounding box from actual content for proper positioning
+		xMin, _, yMin, _ := getBoundingBox(pageAnnotations.Data)
+
+		// Create ExtGState for highlighter transparency
+		// CA = stroke alpha, ca = fill alpha (both needed for consistent transparency)
+		// Value 0.3 matches Python rmc library's Highlighter.base_opacity
+		highlightGsDict := core.MakeDict()
+		highlightGsDict.Set("Type", core.MakeName("ExtGState"))
+		highlightGsDict.Set("CA", core.MakeFloat(0.3))
+		highlightGsDict.Set("ca", core.MakeFloat(0.3))
+
+		// Opaque state for normal strokes (restore full opacity after highlighters)
+		opaqueGsDict := core.MakeDict()
+		opaqueGsDict.Set("Type", core.MakeName("ExtGState"))
+		opaqueGsDict.Set("CA", core.MakeFloat(1.0))
+		opaqueGsDict.Set("ca", core.MakeFloat(1.0))
+
+		// Add the graphics states to page resources
+		if page.Resources == nil {
+			page.Resources = pdf.NewPdfPageResources()
+		}
+		page.Resources.AddExtGState("GS_Highlight", highlightGsDict)
+		page.Resources.AddExtGState("GS_Opaque", opaqueGsDict)
+
 		contentCreator := contentstream.NewContentCreator()
 		contentCreator.Add_q()
 
@@ -131,48 +229,67 @@ func (p *PdfGenerator) Generate() error {
 				if len(line.Points) < 1 {
 					continue
 				}
-				if line.BrushType == rm.Eraser {
+				if line.BrushType == rm.Eraser || line.BrushType == rm.EraseArea {
 					continue
 				}
 
-				if line.BrushType == rm.HighlighterV5 {
-					last := len(line.Points) - 1
-					x1, y1 := normalized(line.Points[0], scale)
-					x2, _ := normalized(line.Points[last], scale)
-					// make horizontal lines only, use y1
-					width := scale * 30
-					y1 += width / 2
-
-					lineDef := annotator.LineAnnotationDef{X1: x1 - 1, Y1: c.Height() - y1, X2: x2, Y2: c.Height() - y1}
-					lineDef.LineColor = pdf.NewPdfColorDeviceRGB(1.0, 1.0, 0.0) //yellow
-					lineDef.Opacity = 0.5
-					lineDef.LineWidth = width
-					ann, err := annotator.CreateLineAnnotation(lineDef)
-					if err != nil {
-						return err
+				if line.BrushType == rm.HighlighterV5 || line.BrushType == rm.Highlighter {
+					// Draw highlighter as a semi-transparent polyline stroke
+					if len(line.Points) < 2 {
+						continue
 					}
-					page.AddAnnotation(ann)
-				} else {
+
+					// Switch to transparent graphics state
+					contentCreator.Add_gs(core.PdfObjectName("GS_Highlight"))
+
 					path := draw.NewPath()
 					for i := 0; i < len(line.Points); i++ {
-						x1, y1 := normalized(line.Points[i], scale)
+						x1, y1 := normalized(line.Points[i], scale, xMin, yMin)
 						path = path.AppendPoint(draw.NewPoint(x1, c.Height()-y1))
 					}
 
-					contentCreator.Add_w(float64(line.BrushSize*6.0 - 10.8))
+					// Highlighter uses wider stroke
+					strokeWidth := float64(line.BrushSize) * scale * 3.0
+					if strokeWidth < 5.0 {
+						strokeWidth = 5.0
+					}
+					contentCreator.Add_w(strokeWidth)
 
-					switch line.BrushColor {
-					case rm.Black:
-						contentCreator.Add_rg(1.0, 1.0, 1.0)
-					case rm.White:
-						contentCreator.Add_rg(0.0, 0.0, 0.0)
-					case rm.Grey:
-						contentCreator.Add_rg(0.8, 0.8, 0.8)
+					// Use actual color
+					r, g, b := brushColorToRGB(line.BrushColor)
+					contentCreator.Add_RG(r, g, b)
+
+					draw.DrawPathWithCreator(path, contentCreator)
+					contentCreator.Add_S()
+
+					// Restore to opaque for non-highlighter strokes
+					contentCreator.Add_gs(core.PdfObjectName("GS_Opaque"))
+				} else {
+					// Draw stroke using path
+					if len(line.Points) < 2 {
+						continue
 					}
 
-					//TODO: use bezier
+					path := draw.NewPath()
+					for i := 0; i < len(line.Points); i++ {
+						x1, y1 := normalized(line.Points[i], scale, xMin, yMin)
+						path = path.AppendPoint(draw.NewPoint(x1, c.Height()-y1))
+					}
+
+					// Set line width - scale to match coordinate scaling
+					strokeWidth := float64(line.BrushSize) * scale
+					if strokeWidth < 0.3 {
+						strokeWidth = 0.3
+					}
+					contentCreator.Add_w(strokeWidth)
+
+					// Use actual color for strokes
+					r, g, b := brushColorToRGB(line.BrushColor)
+					contentCreator.Add_RG(r, g, b) // Add_RG sets stroke color
+
 					draw.DrawPathWithCreator(path, contentCreator)
 
+					// Stroke the path (don't close or fill)
 					contentCreator.Add_S()
 				}
 			}

@@ -1,6 +1,9 @@
 // V6 format decoder for reMarkable software version 3+.
 // This is a scene-based format that is completely different from the
 // V3/V5 binary stroke format.
+//
+// Based on the rmscene Python library by Rick Lupton:
+// https://github.com/ricklupton/rmscene
 package rm
 
 import (
@@ -11,50 +14,51 @@ import (
 	"math"
 )
 
-// Block types
+// Block types (based on rmscene Python library)
 const (
-	BlockTypeSceneInfo           = 0x0D
-	BlockTypeAuthorIds           = 0x09
-	BlockTypeMigrationInfo       = 0x0A
-	BlockTypePageInfo            = 0x0B
-	BlockTypeSceneTree           = 0x01
-	BlockTypeTreeNode            = 0x02
-	BlockTypeSceneGroupItem      = 0x03
-	BlockTypeSceneLineItem       = 0x05
-	BlockTypeSceneGlyphItem      = 0x04
-	BlockTypeRootText            = 0x07
-	BlockTypeSceneTombstoneItem  = 0x08
+	BlockTypeMigrationInfo      = 0x00
+	BlockTypeSceneTree          = 0x01
+	BlockTypeTreeNode           = 0x02
+	BlockTypeSceneGlyphItem     = 0x03 // Glyph/text highlight regions
+	BlockTypeSceneGroupItem     = 0x04 // Group nodes in scene tree
+	BlockTypeSceneLineItem      = 0x05 // Stroke/line data
+	BlockTypeSceneTextItem      = 0x06 // Text item (different from RootText)
+	BlockTypeRootText           = 0x07 // Root text block
+	BlockTypeSceneTombstoneItem = 0x08 // Deleted items
+	BlockTypeAuthorIds          = 0x09
+	BlockTypePageInfo           = 0x0A
+	BlockTypeSceneInfo          = 0x0D
 )
 
 // Tag types for tagged data (rmscene format)
 const (
-	TagByte1   = 0x1 // 1 byte (uint8)
-	TagByte4   = 0x4 // 4 bytes (int32, float32)
-	TagByte8   = 0x8 // 8 bytes (float64, int64)
+	TagByte1   = 0x1 // 1 byte (uint8, bool)
+	TagByte4   = 0x4 // 4 bytes (uint32, float32)
+	TagByte8   = 0x8 // 8 bytes (float64)
 	TagLength4 = 0xC // subblock with uint32 length prefix
-	TagID      = 0xF // CRDT ID (two varuints)
+	TagID      = 0xF // CRDT ID (uint8 + varuint)
 )
 
 // Pen tool types
 const (
-	PenBallpoint      = 2
-	PenMarker         = 3
-	PenFineliner      = 4
-	PenSharpPencil    = 7
-	PenTiltPencil     = 1
-	PenBrush          = 0
-	PenHighlighter    = 5
-	PenEraser         = 6
-	PenEraseArea      = 8
-	PenCalligraphy    = 21
-	// V6 additions (renumbered types)
-	PenBrushV5        = 12
-	PenMechanicalPencil = 13  // Same as PenSharpPencilV5
-	PenPencil         = 14    // Same as PenTiltPencilV5
-	PenBallpointV5    = 15
-	PenMarkerV5       = 16
-	PenFinelinerV5    = 17
-	PenHighlighterV5  = 18
+	PenBrush            = 0
+	PenTiltPencil       = 1
+	PenBallpoint        = 2
+	PenMarker           = 3
+	PenFineliner        = 4
+	PenHighlighter      = 5
+	PenEraser           = 6
+	PenSharpPencil      = 7
+	PenEraseArea        = 8
+	PenBrushV5          = 12
+	PenMechanicalPencil = 13
+	PenPencil           = 14
+	PenBallpointV5      = 15
+	PenMarkerV5         = 16
+	PenFinelinerV5      = 17
+	PenHighlighterV5    = 18
+	PenCalligraphy      = 21
+	PenShader           = 23
 )
 
 // PenColor types
@@ -68,25 +72,41 @@ const (
 	ColorBlue        = 6
 	ColorRed         = 7
 	ColorGreyOverlap = 8
+	ColorHighlight   = 9
+	ColorGreen2      = 10
+	ColorCyan        = 11
+	ColorMagenta     = 12
+	ColorYellow2     = 13
 )
 
-// Reader wraps an io.Reader and provides methods to read V6 format data
-type Reader struct {
-	r io.Reader
+// V6Reader wraps a bytes.Reader and provides methods to read V6 format data.
+type V6Reader struct {
+	r *bytes.Reader
 }
 
-// NewReader creates a new V6 reader
-func NewReader(r io.Reader) *Reader {
-	return &Reader{r: r}
+// NewV6Reader creates a new V6 reader
+func NewV6Reader(data []byte) *V6Reader {
+	return &V6Reader{r: bytes.NewReader(data)}
+}
+
+// Remaining returns the number of bytes remaining
+func (r *V6Reader) Remaining() int {
+	return r.r.Len()
+}
+
+// ReadBytes reads n bytes
+func (r *V6Reader) ReadBytes(n int) ([]byte, error) {
+	buf := make([]byte, n)
+	_, err := io.ReadFull(r.r, buf)
+	return buf, err
 }
 
 // ReadVarUint reads a variable-length unsigned integer
-func (r *Reader) ReadVarUint() (uint64, error) {
+func (r *V6Reader) ReadVarUint() (uint64, error) {
 	var result uint64
 	var shift uint
 	for {
-		var b byte
-		err := binary.Read(r.r, binary.LittleEndian, &b)
+		b, err := r.r.ReadByte()
 		if err != nil {
 			return 0, err
 		}
@@ -99,59 +119,90 @@ func (r *Reader) ReadVarUint() (uint64, error) {
 	return result, nil
 }
 
-// ReadBytes reads n bytes
-func (r *Reader) ReadBytes(n int) ([]byte, error) {
-	buf := make([]byte, n)
-	_, err := io.ReadFull(r.r, buf)
-	return buf, err
-}
-
 // ReadUint8 reads a uint8
-func (r *Reader) ReadUint8() (uint8, error) {
-	var v uint8
-	err := binary.Read(r.r, binary.LittleEndian, &v)
-	return v, err
+func (r *V6Reader) ReadUint8() (uint8, error) {
+	return r.r.ReadByte()
 }
 
 // ReadUint16 reads a uint16
-func (r *Reader) ReadUint16() (uint16, error) {
+func (r *V6Reader) ReadUint16() (uint16, error) {
 	var v uint16
 	err := binary.Read(r.r, binary.LittleEndian, &v)
 	return v, err
 }
 
 // ReadUint32 reads a uint32
-func (r *Reader) ReadUint32() (uint32, error) {
+func (r *V6Reader) ReadUint32() (uint32, error) {
 	var v uint32
 	err := binary.Read(r.r, binary.LittleEndian, &v)
 	return v, err
 }
 
 // ReadFloat32 reads a float32
-func (r *Reader) ReadFloat32() (float32, error) {
+func (r *V6Reader) ReadFloat32() (float32, error) {
 	var v float32
 	err := binary.Read(r.r, binary.LittleEndian, &v)
 	return v, err
 }
 
 // ReadFloat64 reads a float64
-func (r *Reader) ReadFloat64() (float64, error) {
+func (r *V6Reader) ReadFloat64() (float64, error) {
 	var v float64
 	err := binary.Read(r.r, binary.LittleEndian, &v)
 	return v, err
 }
 
-// ReadInt32 reads an int32
-func (r *Reader) ReadInt32() (int32, error) {
-	var v int32
-	err := binary.Read(r.r, binary.LittleEndian, &v)
-	return v, err
+// ReadCrdtID reads a CRDT ID (uint8 + varuint)
+func (r *V6Reader) ReadCrdtID() error {
+	_, err := r.ReadUint8()
+	if err != nil {
+		return err
+	}
+	_, err = r.ReadVarUint()
+	return err
+}
+
+// ReadTag reads a tag and returns the index and tag type
+func (r *V6Reader) ReadTag() (index uint64, tagType uint64, err error) {
+	tagValue, err := r.ReadVarUint()
+	if err != nil {
+		return 0, 0, err
+	}
+	index = tagValue >> 4
+	tagType = tagValue & 0x0F
+	return index, tagType, nil
+}
+
+// SkipTagValue skips the value of a tag based on its type
+func (r *V6Reader) SkipTagValue(tagType uint64) error {
+	switch tagType {
+	case TagID:
+		return r.ReadCrdtID()
+	case TagByte4:
+		_, err := r.ReadUint32()
+		return err
+	case TagByte8:
+		_, err := r.ReadFloat64()
+		return err
+	case TagByte1:
+		_, err := r.ReadUint8()
+		return err
+	case TagLength4:
+		size, err := r.ReadUint32()
+		if err != nil {
+			return err
+		}
+		_, err = r.ReadBytes(int(size))
+		return err
+	default:
+		return fmt.Errorf("unknown tag type: 0x%x", tagType)
+	}
 }
 
 // UnmarshalV6 reads a V6 .rm file and converts it to the common Rm structure
 func UnmarshalV6(data []byte) (*Rm, error) {
-	r := NewReader(bytes.NewReader(data))
-	
+	r := NewV6Reader(data)
+
 	// Read and verify header
 	header, err := r.ReadBytes(43)
 	if err != nil {
@@ -162,7 +213,7 @@ func UnmarshalV6(data []byte) (*Rm, error) {
 	}
 
 	// Parse blocks and extract lines
-	lines, err := parseBlocks(r)
+	lines, err := parseV6Blocks(r)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse blocks: %w", err)
 	}
@@ -179,191 +230,175 @@ func UnmarshalV6(data []byte) (*Rm, error) {
 	return result, nil
 }
 
-// parseBlocks reads all blocks from the stream and extracts line items
-func parseBlocks(r *Reader) ([]Line, error) {
+// parseV6Blocks reads all blocks from the stream and extracts line items
+func parseV6Blocks(r *V6Reader) ([]Line, error) {
 	var lines []Line
 
-	for {
-		// Try to read next block
-		blockType, blockSize, version, err := readBlockHeader(r)
+	for r.Remaining() > 0 {
+		// Read block header
+		blockType, blockData, version, err := readV6BlockHeader(r)
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			return nil, err
+			return lines, fmt.Errorf("failed to read block header: %w", err)
 		}
 
-		// Read block data
-		blockData, err := r.ReadBytes(int(blockSize))
-		if err != nil {
-			return nil, fmt.Errorf("failed to read block data: %w", err)
-		}
-
-		// Parse line items
+		// Parse line items only
 		if blockType == BlockTypeSceneLineItem {
-			line, err := parseLineBlock(blockData, version)
+			line, err := parseV6LineBlock(blockData, version)
 			if err != nil {
 				// Skip failed blocks and continue - partial extraction is better than nothing
 				continue
 			}
-			lines = append(lines, line)
+			if len(line.Points) > 0 {
+				lines = append(lines, line)
+			}
 		}
-		// Ignore other block types for now
 	}
 
 	return lines, nil
 }
 
-// readBlockHeader reads a block header
-// Block format: uint32 length, uint8 unknown, uint8 min_ver, uint8 cur_ver, uint8 block_type
-func readBlockHeader(r *Reader) (blockType byte, size uint32, version byte, err error) {
+// readV6BlockHeader reads a block header and returns the block data
+// Block format: uint32 length, uint8 unknown, uint8 min_ver, uint8 cur_ver, uint8 block_type, then data
+func readV6BlockHeader(r *V6Reader) (blockType byte, data []byte, version byte, err error) {
 	// Read block length
 	blockLength, err := r.ReadUint32()
 	if err != nil {
-		return 0, 0, 0, err
+		return 0, nil, 0, err
 	}
-	
+
 	// Read unknown byte (should be 0)
 	_, err = r.ReadUint8()
 	if err != nil {
-		return 0, 0, 0, err
+		return 0, nil, 0, err
 	}
-	
-	// Read min version (not currently used for validation)
+
+	// Read min version
 	_, err = r.ReadUint8()
 	if err != nil {
-		return 0, 0, 0, err
+		return 0, nil, 0, err
 	}
-	
+
 	// Read current version
 	curVer, err := r.ReadUint8()
 	if err != nil {
-		return 0, 0, 0, err
+		return 0, nil, 0, err
 	}
-	
+
 	// Read block type
 	blockType, err = r.ReadUint8()
 	if err != nil {
-		return 0, 0, 0, err
+		return 0, nil, 0, err
 	}
-	
-	// Block size is the length minus the header bytes already read (4 bytes: unknown + minver + curver + type)
-	size = blockLength
-	version = curVer
-	
-	return blockType, size, version, nil
+
+	// Read block data
+	// The block_length field specifies the size of data AFTER the 4-byte header
+	// Structure: <4-byte length><4-byte header><length bytes of data>
+	dataSize := int(blockLength)
+	if dataSize > 0 {
+		data, err = r.ReadBytes(dataSize)
+		if err != nil {
+			return 0, nil, 0, fmt.Errorf("failed to read block data of size %d: %w", dataSize, err)
+		}
+	}
+
+	return blockType, data, curVer, nil
 }
 
-// parseLineBlock parses a SceneLineItem block
+// parseV6LineBlock parses a SceneLineItem block
 // SceneItemBlock structure: parent_id(1), item_id(2), left_id(3), right_id(4), deleted_length(5), value subblock(6)
-func parseLineBlock(data []byte, blockVersion byte) (Line, error) {
-	r := NewReader(bytes.NewReader(data))
-	
+func parseV6LineBlock(data []byte, blockVersion byte) (Line, error) {
+	r := NewV6Reader(data)
 	var line Line
-	
-	// Skip the CRDT structure fields (parent_id, item_id, left_id, right_id, deleted_length)
-	// We only care about the value subblock at index 6
-	for {
-		// Read tag
-		tagValue, err := r.ReadVarUint()
+
+	// Read tagged fields
+	for r.Remaining() > 0 {
+		index, tagType, err := r.ReadTag()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
 			return line, err
 		}
-		
-		index := tagValue >> 4
-		tagType := tagValue & 0x0F
-		
-		// Skip fields we don't need
-		if index < 6 {
-			// Skip based on tag type
-			switch tagType {
-			case TagID: // CRDT IDs (2 varuints)
-				r.ReadVarUint()
-				r.ReadVarUint()
-			case TagByte4: // 4 bytes (int32)
-				r.ReadInt32()
-			case TagByte1: // 1 byte
-				r.ReadUint8()
-			case TagByte8: // 8 bytes
-				r.ReadFloat64()
-			case TagLength4: // subblock
-				size, _ := r.ReadUint32()
-				r.ReadBytes(int(size))
-			}
-			continue
-		}
-		
-		// Index 6 is the value subblock containing the actual Line data
+
+		// We only care about index 6 (value subblock) for lines
 		if index == 6 && tagType == TagLength4 {
 			// Read subblock size
 			subSize, err := r.ReadUint32()
 			if err != nil {
 				return line, err
 			}
-			
+
 			// Read item type (should be 0x03 for Line)
 			itemType, err := r.ReadUint8()
 			if err != nil {
 				return line, err
 			}
 			if itemType != 0x03 {
-				// Not a line item, skip
+				// Not a line item
 				return line, fmt.Errorf("unexpected item type: 0x%02x", itemType)
 			}
-			
-			// Now read the actual Line data (subSize - 1 bytes, since we already read itemType)
+
+			// Read the actual Line data
 			lineData, err := r.ReadBytes(int(subSize) - 1)
 			if err != nil {
 				return line, err
 			}
-			
+
 			// Parse the Line data
-			return parseLineData(lineData, blockVersion)
+			return parseV6LineData(lineData, blockVersion)
+		}
+
+		// Skip other fields
+		if err := r.SkipTagValue(tagType); err != nil {
+			return line, err
 		}
 	}
-	
+
 	return line, nil
 }
 
-// parseLineData parses the actual Line data from within the value subblock
-func parseLineData(data []byte, blockVersion byte) (Line, error) {
-	r := NewReader(bytes.NewReader(data))
-	
+// parseV6LineData parses the actual Line data from within the value subblock
+func parseV6LineData(data []byte, blockVersion byte) (Line, error) {
+	r := NewV6Reader(data)
 	var line Line
-	
+
 	// Read tagged fields for the Line
-	for {
-		// Read tag
-		tagValue, err := r.ReadVarUint()
+	for r.Remaining() > 0 {
+		index, tagType, err := r.ReadTag()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
 			return line, err
 		}
-		
-		index := tagValue >> 4
-		tagType := tagValue & 0x0F
-		
+
 		switch index {
-		case 1: // tool/pen type (int32)
+		case 1: // tool/pen type (uint32)
 			if tagType == TagByte4 {
-				toolID, err := r.ReadInt32()
+				toolID, err := r.ReadUint32()
 				if err != nil {
 					return line, err
 				}
 				line.BrushType = mapPenToV5BrushType(int(toolID))
+			} else {
+				if err := r.SkipTagValue(tagType); err != nil {
+					return line, err
+				}
 			}
-		case 2: // color (int32)
+		case 2: // color (uint32)
 			if tagType == TagByte4 {
-				colorID, err := r.ReadInt32()
+				colorID, err := r.ReadUint32()
 				if err != nil {
 					return line, err
 				}
 				line.BrushColor = mapColorToV5(int(colorID))
+			} else {
+				if err := r.SkipTagValue(tagType); err != nil {
+					return line, err
+				}
 			}
 		case 3: // thickness_scale (float64)
 			if tagType == TagByte8 {
@@ -371,85 +406,84 @@ func parseLineData(data []byte, blockVersion byte) (Line, error) {
 				if err != nil {
 					return line, err
 				}
-				line.BrushSize = BrushSize(scale * 2.0) // Approximate mapping
+				line.BrushSize = BrushSize(scale * 2.0)
+			} else {
+				if err := r.SkipTagValue(tagType); err != nil {
+					return line, err
+				}
 			}
-		case 4: // starting_length - float stored as 4 bytes (same size as int32)
-			// According to rmscene documentation, this is a float value representing
-			// the starting length of the line. We skip it as it's not used in our rendering.
+		case 4: // starting_length (float32) - not used in rendering
 			if tagType == TagByte4 {
-				r.ReadInt32()
+				_, err := r.ReadFloat32()
+				if err != nil {
+					return line, err
+				}
+			} else {
+				if err := r.SkipTagValue(tagType); err != nil {
+					return line, err
+				}
 			}
 		case 5: // points data (subblock)
 			if tagType == TagLength4 {
-				// Read subblock size (uint32)
 				subSize, err := r.ReadUint32()
 				if err != nil {
 					return line, err
 				}
-				// Read points
-				points, err := parsePoints(r, int(subSize), blockVersion)
+				pointData, err := r.ReadBytes(int(subSize))
+				if err != nil {
+					return line, err
+				}
+				points, err := parseV6Points(pointData, blockVersion)
 				if err != nil {
 					return line, err
 				}
 				line.Points = points
-			}
-		case 6: // timestamp (CRDT ID)
-			if tagType == TagID {
-				r.ReadVarUint()
-				r.ReadVarUint()
-			}
-		case 7: // move_id (optional CRDT ID)
-			if tagType == TagID {
-				r.ReadVarUint()
-				r.ReadVarUint()
+			} else {
+				if err := r.SkipTagValue(tagType); err != nil {
+					return line, err
+				}
 			}
 		default:
-			// Skip unknown fields based on tag type
-			switch tagType {
-			case TagID:
-				r.ReadVarUint()
-				r.ReadVarUint()
-			case TagByte4:
-				r.ReadInt32()
-			case TagByte8:
-				r.ReadFloat64()
-			case TagByte1:
-				r.ReadUint8()
-			case TagLength4:
-				size, _ := r.ReadUint32()
-				r.ReadBytes(int(size))
+			// Skip unknown fields
+			if err := r.SkipTagValue(tagType); err != nil {
+				return line, err
 			}
 		}
 	}
-	
+
 	return line, nil
 }
 
-// parsePoints reads point data from the stream
-func parsePoints(r *Reader, dataSize int, version byte) ([]Point, error) {
-	pointSize := 0x0E // Version 2 point size (14 bytes)
+// parseV6Points reads point data from byte slice
+func parseV6Points(data []byte, version byte) ([]Point, error) {
+	pointSize := 14 // Version 2 point size (14 bytes)
 	if version == 1 {
-		pointSize = 0x18 // Version 1 point size (24 bytes)
+		pointSize = 24 // Version 1 point size (24 bytes)
 	}
-	
-	numPoints := dataSize / pointSize
+
+	if len(data)%pointSize != 0 {
+		return nil, fmt.Errorf("point data size %d is not a multiple of point size %d", len(data), pointSize)
+	}
+
+	numPoints := len(data) / pointSize
 	points := make([]Point, numPoints)
-	
+	r := NewV6Reader(data)
+
 	for i := 0; i < numPoints; i++ {
-		p, err := readPoint(r, version)
+		p, err := readV6Point(r, version)
 		if err != nil {
 			return nil, err
 		}
 		points[i] = p
 	}
-	
+
 	return points, nil
 }
 
-// readPoint reads a single point
-func readPoint(r *Reader, version byte) (Point, error) {
+// readV6Point reads a single point
+func readV6Point(r *V6Reader, version byte) (Point, error) {
 	var p Point
-	
+
 	x, err := r.ReadFloat32()
 	if err != nil {
 		return p, err
@@ -458,12 +492,12 @@ func readPoint(r *Reader, version byte) (Point, error) {
 	if err != nil {
 		return p, err
 	}
-	
+
 	p.X = x
 	p.Y = y
-	
+
 	if version == 1 {
-		// Version 1: float-based encoding
+		// Version 1: float-based encoding (24 bytes per point)
 		speed, err := r.ReadFloat32()
 		if err != nil {
 			return p, err
@@ -480,13 +514,13 @@ func readPoint(r *Reader, version byte) (Point, error) {
 		if err != nil {
 			return p, err
 		}
-		
+
 		p.Speed = speed * 4
 		p.Direction = 255 * direction / (2 * math.Pi)
 		p.Width = width * 4
 		p.Pressure = pressure * 255
 	} else {
-		// Version 2: integer-based encoding
+		// Version 2: integer-based encoding (14 bytes per point)
 		speed, err := r.ReadUint16()
 		if err != nil {
 			return p, err
@@ -503,13 +537,13 @@ func readPoint(r *Reader, version byte) (Point, error) {
 		if err != nil {
 			return p, err
 		}
-		
+
 		p.Speed = float32(speed)
 		p.Width = float32(width)
 		p.Direction = float32(direction)
 		p.Pressure = float32(pressure)
 	}
-	
+
 	return p, nil
 }
 
@@ -535,22 +569,46 @@ func mapPenToV5BrushType(penType int) BrushType {
 	case PenEraseArea:
 		return EraseArea
 	case PenCalligraphy:
-		return Marker // Map to closest equivalent
+		return Marker
+	case PenShader:
+		return Brush
 	default:
-		return BallPoint // Default fallback
+		return BallPoint
 	}
 }
 
-// mapColorToV5 maps V6 color types to V5 colors
+// mapColorToV5 maps V6 color types to BrushColor
 func mapColorToV5(color int) BrushColor {
 	switch color {
 	case ColorBlack:
 		return Black
-	case ColorGrey, ColorGreyOverlap:
+	case ColorGrey:
 		return Grey
 	case ColorWhite:
 		return White
+	case ColorYellow:
+		return Yellow
+	case ColorGreen:
+		return Green
+	case ColorPink:
+		return Pink
+	case ColorBlue:
+		return Blue
+	case ColorRed:
+		return Red
+	case ColorGreyOverlap:
+		return GreyOverlap
+	case ColorHighlight:
+		return Highlight
+	case ColorGreen2:
+		return Green2
+	case ColorCyan:
+		return Cyan
+	case ColorMagenta:
+		return Magenta
+	case ColorYellow2:
+		return Yellow2
 	default:
-		return Black // Default to black for other colors
+		return Black
 	}
 }
