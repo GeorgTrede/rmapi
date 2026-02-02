@@ -9,6 +9,21 @@ import (
 // UnmarshalBinary implements encoding.UnmarshalBinary for
 // transforming bytes into a Rm page
 func (rm *Rm) UnmarshalBinary(data []byte) error {
+	// Check if this is a V6 file by looking at the header
+	if len(data) >= HeaderLen {
+		header := string(data[:HeaderLen])
+		if header == HeaderV6 {
+			// Use V6 parser
+			v6Data, err := UnmarshalV6(data)
+			if err != nil {
+				return fmt.Errorf("failed to parse V6 format: %w", err)
+			}
+			*rm = *v6Data
+			return nil
+		}
+	}
+
+	// Use V3/V5 parser
 	r := newReader(data)
 	if err := r.checkHeader(); err != nil {
 		return err
@@ -67,9 +82,8 @@ func (r *reader) checkHeader() error {
 
 	switch string(buf) {
 	case HeaderV6:
-		// V6 format is not supported - it's a completely different scene-based format
-		// used by reMarkable software version 3+
-		return fmt.Errorf("V6 format is not supported (reMarkable software v3+). These files require updated parsing code. Consider exporting from the device using an older format if possible")
+		// V6 should be handled in UnmarshalBinary before reaching here
+		return fmt.Errorf("V6 format should have been detected earlier")
 	case HeaderV5:
 		r.version = V5
 	case HeaderV3:
