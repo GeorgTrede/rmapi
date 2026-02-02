@@ -119,14 +119,21 @@ func (z *Zip) readContent(zr *zip.Reader) error {
 
 // readPagedata reads the .pagedata file contained in an archive
 // and iterate to gather which template was used for each page.
+// The .pagedata file is optional - if it doesn't exist, this is not an error.
 func (z *Zip) readPagedata(zr *zip.Reader) error {
 	files, err := zipExtFinder(zr, ".pagedata")
 	if err != nil {
 		return err
 	}
 
-	if len(files) != 1 {
-		return errors.New("archive does not contain a unique pagedata file")
+	// .pagedata file is optional - some documents (e.g., annotated PDFs) may not have one
+	if len(files) == 0 {
+		log.Warning.Printf("No .pagedata file found in archive (this is normal for annotated PDFs without templates)")
+		return nil
+	}
+
+	if len(files) > 1 {
+		return errors.New("archive contains multiple pagedata files")
 	}
 
 	file, err := files[0].Open()
@@ -207,10 +214,20 @@ func (z *Zip) readData(zr *zip.Reader) error {
 			return err
 		}
 
+		// Skip empty .rm files (files with no annotations)
+		if len(bytes) == 0 {
+			log.Warning.Printf("Skipping empty .rm file for page %s", name)
+			continue
+		}
+
 		z.Pages[idx].Data = rm.New()
 		err = z.Pages[idx].Data.UnmarshalBinary(bytes)
 		if err != nil {
-			return err
+			// Log warning but continue processing other pages
+			// This allows partial annotation extraction even if some pages have issues
+			log.Warning.Printf("Failed to parse .rm file for page %s: %v (skipping page annotations)", name, err)
+			z.Pages[idx].Data = nil
+			continue
 		}
 	}
 
