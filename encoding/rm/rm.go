@@ -130,9 +130,39 @@ type Rm struct {
 	Layers  []Layer
 }
 
-// A Layer contains lines.
+// A Layer contains lines and text items.
 type Layer struct {
 	Lines []Line
+	Text  []TextItem
+}
+
+// TextStyle represents paragraph styles for V6 text
+type TextStyle int
+
+// Text paragraph styles (from V6 format)
+const (
+	TextStyleBasic          TextStyle = 0
+	TextStylePlain          TextStyle = 1
+	TextStyleHeading        TextStyle = 2
+	TextStyleBold           TextStyle = 3
+	TextStyleBullet         TextStyle = 4
+	TextStyleBullet2        TextStyle = 5
+	TextStyleCheckbox       TextStyle = 6
+	TextStyleCheckboxChecked TextStyle = 7
+)
+
+// TextParagraph represents a paragraph of text with a style
+type TextParagraph struct {
+	Style TextStyle
+	Text  string
+}
+
+// TextItem represents a text block in V6 format
+type TextItem struct {
+	PosX       float64
+	PosY       float64
+	Width      float64
+	Paragraphs []TextParagraph
 }
 
 // A Line is composed of points.

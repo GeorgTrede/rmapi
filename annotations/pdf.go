@@ -302,6 +302,41 @@ func (p *PdfGenerator) Generate() error {
 		// Restore to opaque after highlighters
 		contentCreator.Add_gs(core.PdfObjectName("GS_Opaque"))
 
+		// Third pass: Render text items
+		for _, layer := range pageAnnotations.Data.Layers {
+			for _, textItem := range layer.Text {
+				if len(textItem.Paragraphs) == 0 {
+					continue
+				}
+
+				// Text position - transform from device to PDF coordinates
+				textX := (textItem.PosX - xMin) * scale
+				textY := contentHeight - (textItem.PosY-yMin)*scale
+
+				// Set up text rendering
+				contentCreator.Add_BT() // Begin text
+				contentCreator.Add_Tf(*core.MakeName("Helvetica"), 10*scale)
+				contentCreator.Add_rg(0, 0, 0) // Black text
+
+				lineHeight := 12 * scale
+				for _, para := range textItem.Paragraphs {
+					if para.Text == "" {
+						textY -= lineHeight
+						continue
+					}
+
+					// Position text
+					contentCreator.Add_Td(textX, textY)
+					contentCreator.Add_Tj(*core.MakeString(para.Text))
+
+					// Move to next line
+					textY -= lineHeight
+				}
+
+				contentCreator.Add_ET() // End text
+			}
+		}
+
 		contentCreator.Add_Q()
 		drawingOperations := contentCreator.Operations().String()
 		pageContentStreams, err := page.GetAllContentStreams()
