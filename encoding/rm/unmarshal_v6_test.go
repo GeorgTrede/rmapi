@@ -64,3 +64,71 @@ func TestV5StillWorks(t *testing.T) {
 		t.Errorf("Expected V5, got %v", rm.Version)
 	}
 }
+
+func TestV6TagTypes(t *testing.T) {
+	// Verify tag type constants are correct
+	if TagByte1 != 0x1 {
+		t.Errorf("TagByte1 should be 0x1, got 0x%x", TagByte1)
+	}
+	if TagByte4 != 0x4 {
+		t.Errorf("TagByte4 should be 0x4, got 0x%x", TagByte4)
+	}
+	if TagByte8 != 0x8 {
+		t.Errorf("TagByte8 should be 0x8, got 0x%x", TagByte8)
+	}
+	if TagLength4 != 0xC {
+		t.Errorf("TagLength4 should be 0xC, got 0x%x", TagLength4)
+	}
+	if TagID != 0xF {
+		t.Errorf("TagID should be 0xF, got 0x%x", TagID)
+	}
+}
+
+func TestMapPenToV5BrushType(t *testing.T) {
+	// Test pen type mapping
+	tests := []struct {
+		penType  int
+		expected BrushType
+	}{
+		{PenBallpoint, BallPoint},
+		{PenBallpointV5, BallPoint},
+		{PenMarker, Marker},
+		{PenMarkerV5, Marker},
+		{PenFineliner, Fineliner},
+		{PenFinelinerV5, Fineliner},
+		{PenHighlighter, Highlighter},
+		{PenHighlighterV5, Highlighter},
+		{PenEraser, Eraser},
+		{PenBrush, Brush},
+		{PenBrushV5, Brush},
+	}
+	
+	for _, tt := range tests {
+		result := mapPenToV5BrushType(tt.penType)
+		if result != tt.expected {
+			t.Errorf("mapPenToV5BrushType(%d) = %d, want %d", tt.penType, result, tt.expected)
+		}
+	}
+}
+
+func TestMapColorToV5(t *testing.T) {
+	// Test color mapping
+	tests := []struct {
+		color    int
+		expected BrushColor
+	}{
+		{ColorBlack, Black},
+		{ColorGrey, Grey},
+		{ColorGreyOverlap, Grey},
+		{ColorWhite, White},
+		{ColorYellow, Black}, // Non-standard colors default to black
+		{ColorGreen, Black},
+	}
+	
+	for _, tt := range tests {
+		result := mapColorToV5(tt.color)
+		if result != tt.expected {
+			t.Errorf("mapColorToV5(%d) = %d, want %d", tt.color, result, tt.expected)
+		}
+	}
+}

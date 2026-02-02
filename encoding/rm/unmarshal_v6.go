@@ -373,9 +373,10 @@ func parseLineData(data []byte, blockVersion byte) (Line, error) {
 				}
 				line.BrushSize = BrushSize(scale * 2.0) // Approximate mapping
 			}
-		case 4: // starting_length (int32, actually float stored as int bits or just int)
+		case 4: // starting_length - float stored as 4 bytes (same size as int32)
+			// According to rmscene documentation, this is a float value representing
+			// the starting length of the line. We skip it as it's not used in our rendering.
 			if tagType == TagByte4 {
-				// Skip this field - it's for starting length which we don't use
 				r.ReadInt32()
 			}
 		case 5: // points data (subblock)

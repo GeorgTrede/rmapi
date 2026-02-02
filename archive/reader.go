@@ -92,6 +92,8 @@ func (z *Zip) readContent(zr *zip.Reader) error {
 	if z.Content.CPages != nil && len(z.Content.CPages.Pages) > 0 {
 		z.pageMap = make(map[string]int)
 		// Count non-deleted pages
+		// In the cPages format, deleted pages have a "deleted" object with value=1
+		// Pages without a "deleted" object or with value=0 are considered valid
 		var validPages []CPage
 		for _, page := range z.Content.CPages.Pages {
 			if page.Deleted == nil || page.Deleted.Value == 0 {
