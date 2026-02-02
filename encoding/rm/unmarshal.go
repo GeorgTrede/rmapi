@@ -69,7 +69,7 @@ func (r *reader) checkHeader() error {
 	case HeaderV6:
 		// V6 format is not supported - it's a completely different scene-based format
 		// used by reMarkable software version 3+
-		return fmt.Errorf("V6 format is not supported (reMarkable software v3+). This file uses a different format that requires updated parsing code")
+		return fmt.Errorf("V6 format is not supported (reMarkable software v3+). These files require updated parsing code. Consider exporting from the device using an older format if possible")
 	case HeaderV5:
 		r.version = V5
 	case HeaderV3:

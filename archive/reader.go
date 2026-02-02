@@ -126,9 +126,9 @@ func (z *Zip) readPagedata(zr *zip.Reader) error {
 		return err
 	}
 
-	// .pagedata file is optional - some documents (e.g., certain PDFs) may not have one
+	// .pagedata file is optional - some documents (e.g., annotated PDFs) may not have one
 	if len(files) == 0 {
-		log.Warning.Printf("No .pagedata file found in archive (this is OK for some document types)")
+		log.Warning.Printf("No .pagedata file found in archive (this is normal for annotated PDFs without templates)")
 		return nil
 	}
 
@@ -225,7 +225,7 @@ func (z *Zip) readData(zr *zip.Reader) error {
 		if err != nil {
 			// Log warning but continue processing other pages
 			// This allows partial annotation extraction even if some pages have issues
-			log.Warning.Printf("Failed to parse .rm file for page %s: %v (skipping this page's annotations)", name, err)
+			log.Warning.Printf("Failed to parse .rm file for page %s: %v (skipping page annotations)", name, err)
 			z.Pages[idx].Data = nil
 			continue
 		}
