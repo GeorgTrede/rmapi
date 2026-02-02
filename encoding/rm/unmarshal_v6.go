@@ -14,17 +14,17 @@ import (
 	"math"
 )
 
-// Block types
+// Block types (based on rmscene Python library)
 const (
 	BlockTypeMigrationInfo      = 0x00
 	BlockTypeSceneTree          = 0x01
 	BlockTypeTreeNode           = 0x02
-	BlockTypeSceneGlyphItem     = 0x03
-	BlockTypeSceneGroupItem     = 0x04
-	BlockTypeSceneLineItem      = 0x05
-	BlockTypeSceneTextItem      = 0x06
-	BlockTypeRootText           = 0x07
-	BlockTypeSceneTombstoneItem = 0x08
+	BlockTypeSceneGlyphItem     = 0x03 // Glyph/text highlight regions
+	BlockTypeSceneGroupItem     = 0x04 // Group nodes in scene tree
+	BlockTypeSceneLineItem      = 0x05 // Stroke/line data
+	BlockTypeSceneTextItem      = 0x06 // Text item (different from RootText)
+	BlockTypeRootText           = 0x07 // Root text block
+	BlockTypeSceneTombstoneItem = 0x08 // Deleted items
 	BlockTypeAuthorIds          = 0x09
 	BlockTypePageInfo           = 0x0A
 	BlockTypeSceneInfo          = 0x0D
@@ -412,7 +412,7 @@ func parseV6LineData(data []byte, blockVersion byte) (Line, error) {
 					return line, err
 				}
 			}
-		case 4: // starting_length (float32)
+		case 4: // starting_length (float32) - not used in rendering
 			if tagType == TagByte4 {
 				_, err := r.ReadFloat32()
 				if err != nil {
