@@ -88,6 +88,24 @@ func (z *Zip) readContent(zr *zip.Reader) error {
 	id, _ := util.DocPathToName(p)
 	z.UUID = id
 
+	// Handle new v6 cPages format
+	if z.Content.CPages != nil && len(z.Content.CPages.Pages) > 0 {
+		z.pageMap = make(map[string]int)
+		// Count non-deleted pages
+		var validPages []CPage
+		for _, page := range z.Content.CPages.Pages {
+			if page.Deleted == nil || page.Deleted.Value == 0 {
+				validPages = append(validPages, page)
+			}
+		}
+		z.Pages = make([]Page, len(validPages))
+		for index, page := range validPages {
+			z.pageMap[page.ID] = index
+			z.Pages[index].DocPage = index
+		}
+		return nil
+	}
+
 	redirectedCount := len(z.Content.RedirectionMap)
 	pagesCount := len(z.Content.Pages)
 	if redirectedCount > 0 {

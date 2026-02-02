@@ -26,20 +26,13 @@ const (
 	BlockTypeSceneTombstoneItem  = 0x08
 )
 
-// Tag types for tagged data
+// Tag types for tagged data (rmscene format)
 const (
-	TagByte       = 0x00
-	TagLength4    = 0x01
-	TagLength8    = 0x02
-	TagDouble     = 0x03
-	TagBool       = 0x04
-	TagVarUint    = 0x05
-	TagID1        = 0x06
-	TagID2        = 0x07
-	TagInt        = 0x08
-	TagFloat      = 0x09
-	TagString     = 0x0A
-	TagIDPair     = 0x0B
+	TagByte1   = 0x1 // 1 byte (uint8)
+	TagByte4   = 0x4 // 4 bytes (int32, float32)
+	TagByte8   = 0x8 // 8 bytes (float64, int64)
+	TagLength4 = 0xC // subblock with uint32 length prefix
+	TagID      = 0xF // CRDT ID (two varuints)
 )
 
 // Pen tool types
@@ -287,13 +280,18 @@ func parseLineBlock(data []byte, blockVersion byte) (Line, error) {
 		if index < 6 {
 			// Skip based on tag type
 			switch tagType {
-			case TagID1, TagID2: // CRDT IDs (2 varuints)
+			case TagID: // CRDT IDs (2 varuints)
 				r.ReadVarUint()
 				r.ReadVarUint()
-			case TagInt: // Int32
+			case TagByte4: // 4 bytes (int32)
 				r.ReadInt32()
-			case TagByte:
+			case TagByte1: // 1 byte
 				r.ReadUint8()
+			case TagByte8: // 8 bytes
+				r.ReadFloat64()
+			case TagLength4: // subblock
+				size, _ := r.ReadUint32()
+				r.ReadBytes(int(size))
 			}
 			continue
 		}
@@ -351,29 +349,34 @@ func parseLineData(data []byte, blockVersion byte) (Line, error) {
 		tagType := tagValue & 0x0F
 		
 		switch index {
-		case 1: // tool/pen type
-			if tagType == TagInt {
+		case 1: // tool/pen type (int32)
+			if tagType == TagByte4 {
 				toolID, err := r.ReadInt32()
 				if err != nil {
 					return line, err
 				}
 				line.BrushType = mapPenToV5BrushType(int(toolID))
 			}
-		case 2: // color
-			if tagType == TagInt {
+		case 2: // color (int32)
+			if tagType == TagByte4 {
 				colorID, err := r.ReadInt32()
 				if err != nil {
 					return line, err
 				}
 				line.BrushColor = mapColorToV5(int(colorID))
 			}
-		case 3: // thickness_scale
-			if tagType == TagDouble {
+		case 3: // thickness_scale (float64)
+			if tagType == TagByte8 {
 				scale, err := r.ReadFloat64()
 				if err != nil {
 					return line, err
 				}
 				line.BrushSize = BrushSize(scale * 2.0) // Approximate mapping
+			}
+		case 4: // starting_length (int32, actually float stored as int bits or just int)
+			if tagType == TagByte4 {
+				// Skip this field - it's for starting length which we don't use
+				r.ReadInt32()
 			}
 		case 5: // points data (subblock)
 			if tagType == TagLength4 {
@@ -389,10 +392,31 @@ func parseLineData(data []byte, blockVersion byte) (Line, error) {
 				}
 				line.Points = points
 			}
-		case 6: // timestamp (CRDT ID) - skip
-			if tagType == TagID1 || tagType == TagID2 {
+		case 6: // timestamp (CRDT ID)
+			if tagType == TagID {
 				r.ReadVarUint()
 				r.ReadVarUint()
+			}
+		case 7: // move_id (optional CRDT ID)
+			if tagType == TagID {
+				r.ReadVarUint()
+				r.ReadVarUint()
+			}
+		default:
+			// Skip unknown fields based on tag type
+			switch tagType {
+			case TagID:
+				r.ReadVarUint()
+				r.ReadVarUint()
+			case TagByte4:
+				r.ReadInt32()
+			case TagByte8:
+				r.ReadFloat64()
+			case TagByte1:
+				r.ReadUint8()
+			case TagLength4:
+				size, _ := r.ReadUint32()
+				r.ReadBytes(int(size))
 			}
 		}
 	}
